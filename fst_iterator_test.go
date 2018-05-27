@@ -19,8 +19,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/couchbaselabs/vellum/levenshtein"
-	"github.com/couchbaselabs/vellum/regexp"
+	"github.com/couchbase/vellum/levenshtein"
+	"github.com/couchbase/vellum/regexp"
 )
 
 func TestIterator(t *testing.T) {
@@ -58,6 +58,73 @@ func TestIterator(t *testing.T) {
 	if !reflect.DeepEqual(smallSample, got) {
 		t.Errorf("expected %v, got: %v", smallSample, got)
 	}
+}
+
+func TestIteratorReset(t *testing.T) {
+	var buf bytes.Buffer
+	b, err := New(&buf, nil)
+	if err != nil {
+		t.Fatalf("error creating builder: %v", err)
+	}
+
+	err = insertStringMap(b, smallSample)
+	if err != nil {
+		t.Fatalf("error building: %v", err)
+	}
+
+	err = b.Close()
+	if err != nil {
+		t.Fatalf("error closing: %v", err)
+	}
+
+	fst, err := Load(buf.Bytes())
+	if err != nil {
+		t.Fatalf("error loading set: %v", err)
+	}
+
+	itr, err := fst.Iterator(nil, nil)
+
+	buf.Reset()
+	b, err = New(&buf, nil)
+	if err != nil {
+		t.Fatalf("error creating builder: %v", err)
+	}
+
+	smallSample2 := map[string]uint64{
+		"bold": 25,
+		"last": 1,
+		"next": 500,
+		"tank": 0,
+	}
+	err = insertStringMap(b, smallSample2)
+	if err != nil {
+		t.Fatalf("error building: %v", err)
+	}
+
+	err = b.Close()
+	if err != nil {
+		t.Fatalf("error closing: %v", err)
+	}
+
+	fst, err = Load(buf.Bytes())
+	if err != nil {
+		t.Fatalf("error loading set: %v", err)
+	}
+
+	got := map[string]uint64{}
+	err = itr.Reset(fst, nil, nil, nil)
+	for err == nil {
+		key, val := itr.Current()
+		got[string(key)] = val
+		err = itr.Next()
+	}
+	if err != ErrIteratorDone {
+		t.Errorf("iterator error: %v", err)
+	}
+	if !reflect.DeepEqual(smallSample2, got) {
+		t.Errorf("expected %v, got: %v", smallSample2, got)
+	}
+
 }
 
 func TestIteratorStartKey(t *testing.T) {

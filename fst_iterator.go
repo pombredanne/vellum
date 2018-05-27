@@ -36,6 +36,10 @@ type Iterator interface {
 	// If no keys exist after that point, ErrIteratorDone is returned.
 	Seek(key []byte) error
 
+	// Reset resets the Iterator' internal state to allow for iterator
+	// reuse (e.g. pooling).
+	Reset(f *FST, startKeyInclusive, endKeyExclusive []byte, aut Automaton) error
+
 	// Close() frees any resources held by this iterator.
 	Close() error
 }
@@ -55,28 +59,34 @@ type FSTIterator struct {
 	keysPosStack   []int
 	valsStack      []uint64
 	autStatesStack []int
+
+	nextStart []byte
 }
 
 func newIterator(f *FST, startKeyInclusive, endKeyExclusive []byte,
 	aut Automaton) (*FSTIterator, error) {
 
-	if aut == nil {
-		aut = &AlwaysMatch{}
-	}
-
-	rv := &FSTIterator{
-		f:                 f,
-		startKeyInclusive: startKeyInclusive,
-		endKeyExclusive:   endKeyExclusive,
-		aut:               aut,
-	}
-
-	err := rv.pointTo(startKeyInclusive)
+	rv := &FSTIterator{}
+	err := rv.Reset(f, startKeyInclusive, endKeyExclusive, aut)
 	if err != nil {
 		return nil, err
 	}
-
 	return rv, nil
+}
+
+// Reset resets the Iterator' internal state to allow for iterator
+// reuse (e.g. pooling).
+func (i *FSTIterator) Reset(f *FST, startKeyInclusive, endKeyExclusive []byte, aut Automaton) error {
+	if aut == nil {
+		aut = alwaysMatchAutomaton
+	}
+
+	i.f = f
+	i.startKeyInclusive = startKeyInclusive
+	i.endKeyExclusive = endKeyExclusive
+	i.aut = aut
+
+	return i.pointTo(startKeyInclusive)
 }
 
 // pointTo attempts to point us to the specified location
@@ -99,7 +109,7 @@ func (i *FSTIterator) pointTo(key []byte) error {
 	i.valsStack = i.valsStack[:0]
 	i.autStatesStack = i.autStatesStack[:0]
 
-	root, err := i.f.decoder.stateAt(i.f.decoder.getRoot())
+	root, err := i.f.decoder.stateAt(i.f.decoder.getRoot(), nil)
 	if err != nil {
 		return err
 	}
@@ -127,7 +137,7 @@ func (i *FSTIterator) pointTo(key []byte) error {
 		}
 		autNext := i.aut.Accept(autCurr, key[j])
 
-		next, err := i.f.decoder.stateAt(nextAddr)
+		next, err := i.f.decoder.stateAt(nextAddr, nil)
 		if err != nil {
 			return err
 		}
@@ -173,15 +183,19 @@ func (i *FSTIterator) Next() error {
 func (i *FSTIterator) next(lastOffset int) error {
 
 	// remember where we started
-	start := make([]byte, len(i.keysStack))
-	copy(start, i.keysStack)
+	if cap(i.nextStart) < len(i.keysStack) {
+		i.nextStart = make([]byte, len(i.keysStack))
+	} else {
+		i.nextStart = i.nextStart[0:len(i.keysStack)]
+	}
+	copy(i.nextStart, i.keysStack)
 
 	for true {
 		curr := i.statesStack[len(i.statesStack)-1]
 		autCurr := i.autStatesStack[len(i.autStatesStack)-1]
 
 		if curr.Final() && i.aut.IsMatch(autCurr) &&
-			bytes.Compare(i.keysStack, start) > 0 {
+			bytes.Compare(i.keysStack, i.nextStart) > 0 {
 			// in final state greater than start key
 			return nil
 		}
@@ -192,8 +206,16 @@ func (i *FSTIterator) next(lastOffset int) error {
 			autNext := i.aut.Accept(autCurr, t)
 			if i.aut.CanMatch(autNext) {
 				pos, nextAddr, v := curr.TransitionFor(t)
+
+				// the next slot in the statesStack might have an
+				// fstState instance that we can reuse
+				var nextPrealloc fstState
+				if len(i.statesStack) < cap(i.statesStack) {
+					nextPrealloc = i.statesStack[0:cap(i.statesStack)][len(i.statesStack)]
+				}
+
 				// push onto stack
-				next, err := i.f.decoder.stateAt(nextAddr)
+				next, err := i.f.decoder.stateAt(nextAddr, nextPrealloc)
 				if err != nil {
 					return err
 				}

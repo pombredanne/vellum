@@ -57,13 +57,18 @@ func (d *decoderV1) getLen() int {
 	return int(dlen)
 }
 
-func (d *decoderV1) stateAt(addr int) (fstState, error) {
-	var state fstStateV1
+func (d *decoderV1) stateAt(addr int, prealloc fstState) (fstState, error) {
+	state, ok := prealloc.(*fstStateV1)
+	if ok && state != nil {
+		*state = fstStateV1{} // clear the struct
+	} else {
+		state = &fstStateV1{}
+	}
 	err := state.at(d.data, addr)
 	if err != nil {
 		return nil, err
 	}
-	return &state, nil
+	return state, nil
 }
 
 type fstStateV1 struct {
@@ -184,18 +189,19 @@ func (f *fstStateV1) atMulti(data []byte, addr int) error {
 	}
 	f.bottom-- // extra byte with pack sizes
 	f.transSize, f.outSize = decodePackSize(data[f.bottom])
+
+	f.transTop = f.bottom
 	f.bottom -= f.numTrans // one byte for each transition
 	f.transBottom = f.bottom
-	f.transTop = f.bottom + f.numTrans
 
+	f.destTop = f.bottom
 	f.bottom -= f.numTrans * f.transSize
 	f.destBottom = f.bottom
-	f.destTop = f.bottom + (f.numTrans * f.transSize)
 
 	if f.outSize > 0 {
+		f.outTop = f.bottom
 		f.bottom -= f.numTrans * f.outSize
 		f.outBottom = f.bottom
-		f.outTop = f.bottom + (f.numTrans * f.outSize)
 		if f.final {
 			f.bottom -= f.outSize
 			f.outFinal = f.bottom

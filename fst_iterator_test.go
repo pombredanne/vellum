@@ -83,6 +83,9 @@ func TestIteratorReset(t *testing.T) {
 	}
 
 	itr, err := fst.Iterator(nil, nil)
+	if err != nil {
+		t.Fatalf("error creating an iterator: %v", err)
+	}
 
 	buf.Reset()
 	b, err = New(&buf, nil)
@@ -547,7 +550,12 @@ func TestFuzzySearch(t *testing.T) {
 		t.Fatalf("error loading set: %v", err)
 	}
 
-	fuzzy, err := levenshtein.New("tue", 1)
+	lb, err := levenshtein.NewLevenshteinAutomatonBuilder(uint8(1), false)
+	if err != nil {
+		t.Fatalf("error loading set: %v", err)
+	}
+
+	fuzzy, err := lb.BuildDfa("tue", 1)
 	if err != nil {
 		t.Fatalf("error building levenshtein automaton: %v", err)
 	}
@@ -602,6 +610,7 @@ func TestRegexpSearch(t *testing.T) {
 		"thurs": 5,
 		"tues":  3,
 	}
+
 	got := map[string]uint64{}
 	itr, err := fst.Search(r, nil, nil)
 	for err == nil {
@@ -614,5 +623,74 @@ func TestRegexpSearch(t *testing.T) {
 	}
 	if !reflect.DeepEqual(want, got) {
 		t.Errorf("expected %v, got: %v", want, got)
+	}
+
+	got = map[string]uint64{}
+	itr, err = fst.Search(r, []byte("t"), nil)
+	for err == nil {
+		key, val := itr.Current()
+		got[string(key)] = val
+		err = itr.Next()
+	}
+	if err != ErrIteratorDone {
+		t.Errorf("iterator error: %v", err)
+	}
+	if !reflect.DeepEqual(want, got) {
+		t.Errorf("with start key t, expected %v, got: %v", want, got)
+	}
+
+	got = map[string]uint64{}
+	itr, err = fst.Search(r, nil, []byte("u"))
+	for err == nil {
+		key, val := itr.Current()
+		got[string(key)] = val
+		err = itr.Next()
+	}
+	if err != ErrIteratorDone {
+		t.Errorf("iterator error: %v", err)
+	}
+	if !reflect.DeepEqual(want, got) {
+		t.Errorf("with end key u, expected %v, got: %v", want, got)
+	}
+
+	got = map[string]uint64{}
+	itr, err = fst.Search(r, []byte("t"), []byte("u"))
+	for err == nil {
+		key, val := itr.Current()
+		got[string(key)] = val
+		err = itr.Next()
+	}
+	if err != ErrIteratorDone {
+		t.Errorf("iterator error: %v", err)
+	}
+	if !reflect.DeepEqual(want, got) {
+		t.Errorf("with start key t, end key u, expected %v, got: %v", want, got)
+	}
+}
+
+func TestIssue32(t *testing.T) {
+	var buf bytes.Buffer
+	b, err := New(&buf, nil)
+	if err != nil {
+		t.Fatalf("error creating builder: %v", err)
+	}
+	err = b.Insert(bytes.Repeat([]byte{'a'}, 1000000), 0)
+	if err != nil {
+		t.Fatalf("error inserting large key: %v", err)
+	}
+	err = b.Close()
+	if err != nil {
+		t.Fatalf("error closing: %v", err)
+	}
+	fst, err := Load(buf.Bytes())
+	if err != nil {
+		t.Fatalf("error loading set: %v", err)
+	}
+	itr, err := fst.Iterator(nil, nil)
+	for err == nil {
+		err = itr.Next()
+	}
+	if err != ErrIteratorDone {
+		t.Errorf("iterator error: %v", err)
 	}
 }

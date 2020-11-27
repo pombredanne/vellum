@@ -15,6 +15,7 @@
 package vellum
 
 import (
+	"bytes"
 	"io/ioutil"
 	"os"
 	"reflect"
@@ -31,8 +32,6 @@ func TestRoundTripSimple(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	}()
-	defer func() {
 		err = os.Remove(f.Name())
 		if err != nil {
 			t.Fatal(err)
@@ -51,7 +50,7 @@ func TestRoundTripSimple(t *testing.T) {
 
 	err = b.Close()
 	if err != nil {
-		t.Fatalf("err closing: %v", err)
+		t.Fatalf("error closing: %v", err)
 	}
 
 	fst, err := Open(f.Name())
@@ -137,6 +136,16 @@ func TestRoundTripSimple(t *testing.T) {
 	if exists {
 		t.Errorf("expected key 'mo' to not exist, does")
 	}
+
+	minKey, _ := fst.GetMinKey()
+	if string(minKey) != "mon" {
+		t.Errorf("expected minKey 'mon', got %v", string(minKey))
+	}
+
+	maxKey, _ := fst.GetMaxKey()
+	if string(maxKey) != "tye" {
+		t.Errorf("expected maxKey 'tye', got %v", string(maxKey))
+	}
 }
 
 func TestRoundTripThousand(t *testing.T) {
@@ -152,8 +161,6 @@ func TestRoundTripThousand(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	}()
-	defer func() {
 		err = os.Remove(f.Name())
 		if err != nil {
 			t.Fatal(err)
@@ -226,8 +233,6 @@ func TestRoundTripEmpty(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	}()
-	defer func() {
 		err = os.Remove(f.Name())
 		if err != nil {
 			t.Fatal(err)
@@ -285,8 +290,6 @@ func TestRoundTripEmptyString(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	}()
-	defer func() {
 		err = os.Remove(f.Name())
 		if err != nil {
 			t.Fatal(err)
@@ -298,7 +301,7 @@ func TestRoundTripEmptyString(t *testing.T) {
 		t.Fatalf("error creating builder: %v", err)
 	}
 
-	err = b.Insert([]byte(""), 0)
+	err = b.Insert([]byte(""), 1)
 	if err != nil {
 		t.Fatalf("error inserting empty string")
 	}
@@ -325,7 +328,7 @@ func TestRoundTripEmptyString(t *testing.T) {
 
 	// first check all the expected values
 	want := map[string]uint64{
-		"": 0,
+		"": 1,
 	}
 	got := map[string]uint64{}
 	itr, err := fst.Iterator(nil, nil)
@@ -352,8 +355,6 @@ func TestRoundTripEmptyStringAndOthers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	}()
-	defer func() {
 		err = os.Remove(f.Name())
 		if err != nil {
 			t.Fatal(err)
@@ -426,8 +427,6 @@ func TestMerge(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	}()
-	defer func() {
 		err = os.Remove(f.Name())
 		if err != nil {
 			t.Fatal(err)
@@ -446,7 +445,7 @@ func TestMerge(t *testing.T) {
 
 	err = b.Close()
 	if err != nil {
-		t.Fatalf("err closing: %v", err)
+		t.Fatalf("error closing: %v", err)
 	}
 
 	smallSample2 := map[string]uint64{
@@ -466,8 +465,6 @@ func TestMerge(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	}()
-	defer func() {
 		err = os.Remove(f2.Name())
 		if err != nil {
 			t.Fatal(err)
@@ -486,7 +483,7 @@ func TestMerge(t *testing.T) {
 
 	err = b.Close()
 	if err != nil {
-		t.Fatalf("err closing: %v", err)
+		t.Fatalf("error closing: %v", err)
 	}
 
 	// now open them both up
@@ -530,8 +527,6 @@ func TestMerge(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	}()
-	defer func() {
 		err = os.Remove(f3.Name())
 		if err != nil {
 			t.Fatal(err)
@@ -582,5 +577,104 @@ func TestMerge(t *testing.T) {
 	}
 	if !reflect.DeepEqual(want, got) {
 		t.Errorf("expected %v, got: %v", want, got)
+	}
+}
+
+func BenchmarkKey4000K(b *testing.B) {
+	benchmarkBigKey(b, 4000000)
+}
+
+func BenchmarkKey1000K(b *testing.B) {
+	benchmarkBigKey(b, 1000000)
+}
+
+func BenchmarkKey100K(b *testing.B) {
+	benchmarkBigKey(b, 100000)
+}
+
+func BenchmarkKey10K(b *testing.B) {
+	benchmarkBigKey(b, 10000)
+}
+
+func BenchmarkKey1K(b *testing.B) {
+	benchmarkBigKey(b, 1000)
+}
+
+func benchmarkBigKey(b *testing.B, n int) {
+	big := bytes.Repeat([]byte("a"), n)
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		b, err := New(ioutil.Discard, nil)
+		if err != nil {
+			break
+		}
+
+		err = b.Insert(big, 0)
+		if err != nil {
+			break
+		}
+
+		err = b.Close()
+		if err != nil {
+			break
+		}
+	}
+}
+
+func TestMaxWithSubstring(t *testing.T) {
+	var buf bytes.Buffer
+	builder, err := New(&buf, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = builder.Insert([]byte("1"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = builder.Insert([]byte("11"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = builder.Insert([]byte("9"), 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = builder.Insert([]byte("99"), 99)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = builder.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fst, err := Load(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mink, err := fst.GetMinKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(mink) != "1" {
+		t.Fatalf("expected max key 1, got %s", string(mink))
+	}
+
+	maxk, err := fst.GetMaxKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(maxk) != "99" {
+		t.Fatalf("expected max key 99, got %s", string(maxk))
 	}
 }
